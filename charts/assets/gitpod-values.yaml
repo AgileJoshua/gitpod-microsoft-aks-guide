@@ -26,8 +26,8 @@ resources:
 
 workspaceSizing:
   requests:
-    cpu: 1m
-    memory: 1.75Gi
+    cpu: 300m
+    memory: 2.75Gi
     storage: ""
   limits:
     cpu: "6"
@@ -220,7 +220,7 @@ components:
         expose: true
         containerPort: 443
     certManager:
-      issuerName: azure-issuer
+      issuerName: letsencrypt
       issuerKind: ClusterIssuer
     serviceExternalTrafficPolicy: Local
     serviceType: LoadBalancer

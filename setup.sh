@@ -13,11 +13,15 @@ source "${DIR}/.env"
 set -a
 
 # Name of the node-pools for Gitpod services and workspaces
-SERVICES_POOL="services"
-WORKSPACES_POOL="workspaces"
+SYSTEM_POOL="system2"
+SERVICES_POOL="services2"
+WORKSPACES_POOL="workspaces2"
+NO_SCALE="noscale"
 
 AKS_VERSION=${AKS_VERSION:="1.20.7"}
-K8S_NODE_VM_SIZE=${K8S_NODE_VM_SIZE:="Standard_DS3_v2"}
+K8S_SYSTEM_VM_SIZE=${K8S_SYSTEM_VM_SIZE:="Standard_DS3_v2"}
+K8S_SERVICES_VM_SIZE=${K8S_SERVICES_VM_SIZE:="Standard_DS3_v2"}
+K8S_WORKSPACES_VM_SIZE=${K8S_WORKSPACES_VM_SIZE:="Standard_DS3_v2"}
 GITPOD_VERSION=${GITPOD_VERSION:="0.10.0"}
 
 function auth() {
@@ -48,14 +52,18 @@ function check_prerequisites() {
         exit 1;
     fi
 
-    if [ -z "${AZURE_CLIENT_ID}" ]; then
-        echo "Missing AZURE_CLIENT_ID environment variable."
-        exit 1;
-    fi
+    if [[ -z "${USE_MANAGED_CLUSTER_IDENTITY}" || "${USE_MANAGED_CLUSTER_IDENTITY}" != "true" ]]; then
 
-    if [ -z "${AZURE_CLIENT_SECRET}" ]; then
-        echo "Missing AZURE_CLIENT_SECRET environment variable."
-        exit 1;
+      if [[ -z "${AZURE_CLIENT_ID}" ]]; then
+          echo "Missing AZURE_CLIENT_ID environment variable."
+          exit 1;
+      fi
+
+      if [ -z "${AZURE_CLIENT_SECRET}" ]; then
+          echo "Missing AZURE_CLIENT_SECRET environment variable."
+          exit 1;
+      fi
+
     fi
 
     if [ -z "${RESOURCE_GROUP}" ]; then
@@ -82,6 +90,26 @@ function check_prerequisites() {
         echo "Missing REGISTRY_NAME environment variable."
         exit 1;
     fi
+
+    if [ -z "${LETSENCRYPT_EMAIL}" ]; then
+        echo "Missing LETSENCRYPT_EMAIL environment variable."
+        exit 1;
+    fi
+
+    if [[ -n "${USE_CLOUDFLARE_DNS}" && "${USE_CLOUDFLARE_DNS}" == "true" ]]; then
+
+      if [ -z "${CLOUDFLARE_API_TOKEN}" ]; then
+          echo "Missing CLOUDFLARE_API_TOKEN environment variable."
+          exit 1;
+      fi
+
+      if [ -z "${CLOUDFLARE_EMAIL}" ]; then
+        echo "Missing CLOUDFLARE_EMAIL environment variable."
+        exit 1;
+      fi
+
+    fi
+
 }
 
 function install() {
@@ -111,6 +139,12 @@ function install() {
       echo "Kubernetes cluster exists..."
     else
       echo "Creating Kubernetes instance..."
+      ATTACH_REGISTRY="\\"
+
+      if [[ -n "${USE_MANAGED_CLUSTER_IDENTITY}" && "${USE_MANAGED_CLUSTER_IDENTITY}" == "true" ]]; then
+        ATTACH_REGISTRY="--attach-acr ${REGISTRY_NAME} \\"
+      fi
+
       az aks create \
         --enable-cluster-autoscaler \
         --enable-managed-identity \
@@ -118,15 +152,59 @@ function install() {
         --kubernetes-version "${AKS_VERSION}" \
         --max-count "50" \
         --max-pods "110" \
-        --min-count "3" \
+        --min-count "1" \
+        --node-count "1" \
         --name "${CLUSTER_NAME}" \
         --node-osdisk-size "100" \
-        --node-vm-size "${K8S_NODE_VM_SIZE}" \
+        --node-vm-size "${K8S_SERVICES_VM_SIZE}" \
         --nodepool-labels "gitpod.io/workload_services=true" \
         --nodepool-name "${SERVICES_POOL}" \
         --resource-group "${RESOURCE_GROUP}" \
         --no-ssh-key \
+        ${ATTACH_REGISTRY}
         --vm-set-type "VirtualMachineScaleSets"
+
+    fi
+
+    if [ "$(az aks nodepool show --cluster-name ${CLUSTER_NAME} --name ${SYSTEM_POOL} --resource-group ${RESOURCE_GROUP} --query "name == '${SYSTEM_POOL}'" || echo "empty")" == "true" ]; then
+      echo "Node pool ${SYSTEM_POOL} exists..."
+    else
+      echo "Creating ${SYSTEM_POOL} node pool..."
+      az aks nodepool add \
+        --cluster-name "${CLUSTER_NAME}" \
+        --enable-cluster-autoscaler \
+        --kubernetes-version "${AKS_VERSION}" \
+        --max-count "5" \
+        --max-pods "110" \
+        --min-count "1" \
+        --node-count "1" \
+        --name "${SYSTEM_POOL}" \
+        --node-osdisk-size "100" \
+        --node-vm-size "${K8S_SYSTEM_VM_SIZE}" \
+        --resource-group "${RESOURCE_GROUP}" \
+        --node-taints CriticalAddonsOnly=true:NoSchedule \
+        --mode System
+
+      #make initial nodepool user pool
+      az aks nodepool update \
+          --cluster-name "${CLUSTER_NAME}" \
+          --name ${SERVICES_POOL} \
+          --resource-group "${RESOURCE_GROUP}" \
+          --mode User
+
+        az aks nodepool update \
+          --cluster-name "${CLUSTER_NAME}" \
+          --name ${SERVICES_POOL} \
+          --resource-group "${RESOURCE_GROUP}" \
+          --update-cluster-autoscaler \
+          --min-count 0 \
+          --max-count 5
+
+        az aks update \
+          --resource-group "${RESOURCE_GROUP}" \
+          --name "${CLUSTER_NAME}" \
+          --cluster-autoscaler-profile expander=least-waste scale-down-delay-after-add=5m scale-down-unneeded-time=5m scale-down-utilization-threshold=0.6 
+   
     fi
 
     if [ "$(az aks nodepool show --cluster-name ${CLUSTER_NAME} --name ${WORKSPACES_POOL} --resource-group ${RESOURCE_GROUP} --query "name == '${WORKSPACES_POOL}'" || echo "empty")" == "true" ]; then
@@ -139,14 +217,62 @@ function install() {
         --enable-cluster-autoscaler \
         --kubernetes-version "${AKS_VERSION}" \
         --labels "gitpod.io/workload_workspaces=true" \
-        --max-count "50" \
+        --max-count "5" \
         --max-pods "110" \
-        --min-count "3" \
+        --min-count "0" \
+        --node-count "1" \
         --name "${WORKSPACES_POOL}" \
         --node-osdisk-size "100" \
-        --node-vm-size "${K8S_NODE_VM_SIZE}" \
+        --node-vm-size "${K8S_WORKSPACES_VM_SIZE}" \
         --resource-group "${RESOURCE_GROUP}"
+
+        az aks nodepool update \
+          --cluster-name "${CLUSTER_NAME}" \
+          --name ${WORKSPACES_POOL} \
+          --resource-group "${RESOURCE_GROUP}" \
+          --update-cluster-autoscaler \
+          --min-count 0 \
+          --max-count 5
       fi
+
+    if [ "$(az aks nodepool show --cluster-name ${CLUSTER_NAME} --name ${WORKSPACES_POOL}${NO_SCALE} --resource-group ${RESOURCE_GROUP} --query "name == '${WORKSPACES_POOL}${NO_SCALE}'" || echo "empty")" == "true" ]; then
+      echo "Node pool ${WORKSPACES_POOL}${NO_SCALE} exists..."
+    else
+      echo "Creating ${WORKSPACES_POOL}${NO_SCALE} node pool..."
+
+      az aks nodepool add \
+        --cluster-name "${CLUSTER_NAME}" \
+        --enable-cluster-autoscaler \
+        --kubernetes-version "${AKS_VERSION}" \
+        --labels "gitpod.io/workload_workspaces=true" \
+        --max-count "2" \
+        --max-pods "110" \
+        --min-count "0" \
+        --node-count "1" \
+        --name "${WORKSPACES_POOL}${NO_SCALE}" \
+        --node-osdisk-size "100" \
+        --node-vm-size "${K8S_SYSTEM_VM_SIZE}" \
+        --resource-group "${RESOURCE_GROUP}"
+    fi
+
+    if [ "$(az aks nodepool show --cluster-name ${CLUSTER_NAME} --name ${SERVICES_POOL}${NO_SCALE} --resource-group ${RESOURCE_GROUP} --query "name == '${SERVICES_POOL}${NO_SCALE}'" || echo "empty")" == "true" ]; then
+      echo "Node pool ${SERVICES_POOL}${NO_SCALE} exists..."
+    else
+      echo "Creating ${SERVICES_POOL}${NO_SCALE} node pool..."
+
+      az aks nodepool add \
+        --cluster-name "${CLUSTER_NAME}" \
+        --kubernetes-version "${AKS_VERSION}" \
+        --labels "gitpod.io/workload_services=true" \
+        --max-count "2" \
+        --max-pods "110" \
+        --min-count "0" \
+        --node-count "1" \
+        --name "${SERVICES_POOL}${NO_SCALE}" \
+        --node-osdisk-size "100" \
+        --node-vm-size "${K8S_SYSTEM_VM_SIZE}" \
+        --resource-group "${RESOURCE_GROUP}"
+    fi
 
     setup_kubectl
 
@@ -161,6 +287,7 @@ function install() {
 
     install_cert_manager
     setup_container_registry
+    setup_cloudflare_dns
     setup_managed_dns
     setup_mysql_database
     setup_storage
@@ -240,8 +367,14 @@ function install_jaeger_operator(){
 }
 
 function login() {
-  echo "Log into Azure with Service Principal..."
-  az login --service-principal -u "${AZURE_CLIENT_ID}" -p "${AZURE_CLIENT_SECRET}" --tenant "${AZURE_TENANT_ID}" > /dev/null 2>&1
+
+  if [[ -n "${USE_MANAGED_CLUSTER_IDENTITY}" && "${USE_MANAGED_CLUSTER_IDENTITY}" == "true" ]]; then
+    echo "Log into Azure with your account..."
+    az login --tenant "${AZURE_TENANT_ID}"
+  else
+    echo "Log into Azure with Service Principal..."
+    az login --service-principal -u "${AZURE_CLIENT_ID}" -p "${AZURE_CLIENT_SECRET}" --tenant "${AZURE_TENANT_ID}" > /dev/null 2>&1
+  fi
 
   echo "Set Azure subscription..."
   az account set --subscription "${AZURE_SUBSCRIPTION_ID}"
@@ -291,6 +424,13 @@ function setup_kubectl() {
     --name "${CLUSTER_NAME}" \
     --resource-group "${RESOURCE_GROUP}" \
     --overwrite-existing
+}
+
+function setup_cloudflare_dns() {
+  if [ -n "${USE_CLOUDFLARE_DNS}" ] && [ "${USE_CLOUDFLARE_DNS}" == "true" ]; then
+    echo "Installing cert-manager certificate issuer..."
+    envsubst < "${DIR}/charts/assets/issuer-cloudflare.yaml" | kubectl apply -f -
+  fi
 }
 
 function setup_managed_dns() {
@@ -463,6 +603,9 @@ function main() {
     ;;
     '--uninstall')
       uninstall
+    ;;
+    '--check')
+      check_prerequisites
     ;;
     *)
       echo "Unknown command: $1"

@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cloudflare-api-token-secret
+  namespace: kube-system
+type: Opaque
+stringData:
+  api-token: $CLOUDFLARE_API_TOKEN
+
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt
+spec:
+  acme:
+    email: $LETSENCRYPT_EMAIL
+    server: $LETSENCRYPT_DIRECTORY
+    privateKeySecretRef:
+      name: issuer-account-key
+    solvers:
+      - dns01:
+         cloudflare:
+            email: $CLOUDFLARE_EMAIL # Your Cloudflare email address
+            apiTokenSecretRef:
+              name: cloudflare-api-token-secret
+              key: api-token
+
+        # This section denotes which domains to use this issuer for. If you didn't
+        # limit which zones the API token had access to, you may wish to remove
+        # this section.
+        selector:
+          dnsZones:
+            # Only use this issuer for the domain and its subdomains.
+            - $DOMAIN
