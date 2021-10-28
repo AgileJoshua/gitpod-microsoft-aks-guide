@@ -1,1 +1,2 @@
-image: vlaaaaaaad/gitpod-helm:latest
+image:
+  file: .gitpod.Dockerfile
