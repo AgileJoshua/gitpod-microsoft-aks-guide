@@ -21,4 +21,7 @@ RUN curl -o /usr/bin/kubectx https://raw.githubusercontent.com/ahmetb/kubectx/ma
 # yq - jq for YAML files
 RUN cd /usr/bin && curl -L https://github.com/mikefarah/yq/releases/download/2.4.0/yq_linux_amd64 > yq && chmod +x yq
 
+#az for aks
+RUN curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
 USER gitpod
