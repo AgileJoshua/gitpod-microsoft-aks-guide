@@ -13,15 +13,14 @@ source "${DIR}/.env"
 set -a
 
 # Name of the node-pools for Gitpod services and workspaces
-SYSTEM_POOL="system2"
-SERVICES_POOL="services2"
-WORKSPACES_POOL="workspaces2"
-NO_SCALE="noscale"
+SERVICES_POOL="services"
+WORKSPACES_POOL="workspaces"
+NOSCALE_POOL="noscale"
 
-AKS_VERSION=${AKS_VERSION:="1.20.7"}
-K8S_SYSTEM_VM_SIZE=${K8S_SYSTEM_VM_SIZE:="Standard_DS3_v2"}
-K8S_SERVICES_VM_SIZE=${K8S_SERVICES_VM_SIZE:="Standard_DS3_v2"}
-K8S_WORKSPACES_VM_SIZE=${K8S_WORKSPACES_VM_SIZE:="Standard_DS3_v2"}
+AKS_VERSION=${AKS_VERSION:="1.20.9"}
+K8S_NOSCALE_VM_SIZE=${K8S_NOSCALE_VM_SIZE:="Standard_B2ms"}
+K8S_SERVICES_VM_SIZE=${K8S_SERVICES_VM_SIZE:="Standard_B2s"}
+K8S_WORKSPACES_VM_SIZE=${K8S_WORKSPACES_VM_SIZE:="Standard_B4ms"}
 GITPOD_VERSION=${GITPOD_VERSION:="0.10.0"}
 
 function auth() {
@@ -113,6 +112,13 @@ function check_prerequisites() {
 
 }
 
+function update_autoscaler() {
+   az aks update \
+      --resource-group "${RESOURCE_GROUP}" \
+      --name "${CLUSTER_NAME}" \
+      --cluster-autoscaler-profile expander=least-waste scale-down-delay-after-add=5m scale-down-unneeded-time=5m scale-down-utilization-threshold=0.6 
+}
+
 function install() {
     check_prerequisites
 
@@ -151,20 +157,19 @@ function install() {
         --enable-managed-identity \
         --location "${LOCATION}" \
         --kubernetes-version "${AKS_VERSION}" \
-        --max-count "50" \
         --max-pods "110" \
-        --min-count "1" \
         --node-count "1" \
         --name "${CLUSTER_NAME}" \
         --node-osdisk-size "100" \
-        --node-vm-size "${K8S_SERVICES_VM_SIZE}" \
-        --nodepool-labels "gitpod.io/workload_services=true" \
-        --nodepool-name "${SERVICES_POOL}" \
+        --node-vm-size "${K8S_NOSCALE_VM_SIZE}" \
+        --nodepool-labels "gitpod.io/workload_services=true" "gitpod.io/workload_workspaces=true" "app.kubernetes.io/component=primary" "app.kubernetes.io/instance=gitpod" \
+        --nodepool-name "${NOSCALE_POOL}" \
         --resource-group "${RESOURCE_GROUP}" \
         --no-ssh-key \
         ${ATTACH_REGISTRY}
         --vm-set-type "VirtualMachineScaleSets"
 
+      update_autoscaler
     fi
 
     if [ "$(az aks nodepool show --cluster-name ${CLUSTER_NAME} --name ${SERVICES_POOL} --resource-group ${RESOURCE_GROUP} --query "name == '${SERVICES_POOL}'" || echo "empty")" == "true" ]; then
@@ -189,20 +194,17 @@ function install() {
     if [ "$(az aks nodepool show --cluster-name ${CLUSTER_NAME} --name ${SYSTEM_POOL} --resource-group ${RESOURCE_GROUP} --query "name == '${SYSTEM_POOL}'" || echo "empty")" == "true" ]; then
       echo "Node pool ${SYSTEM_POOL} exists..."
     else
-      echo "Creating ${SYSTEM_POOL} node pool..."
+      echo "Creating ${NOSCALE_POOL} node pool..."
       az aks nodepool add \
         --cluster-name "${CLUSTER_NAME}" \
-        --enable-cluster-autoscaler \
         --kubernetes-version "${AKS_VERSION}" \
-        --max-count "5" \
+        --labels "gitpod.io/workload_services=true" "gitpod.io/workload_workspaces=true" \
         --max-pods "110" \
-        --min-count "1" \
         --node-count "1" \
-        --name "${SYSTEM_POOL}" \
+        --name "${NOSCALE_POOL}" \
         --node-osdisk-size "100" \
-        --node-vm-size "${K8S_SYSTEM_VM_SIZE}" \
+        --node-vm-size "${K8S_NOSCALE_VM_SIZE}" \
         --resource-group "${RESOURCE_GROUP}" \
-        --node-taints CriticalAddonsOnly=true:NoSchedule \
         --mode System
 
       #make initial nodepool user pool
@@ -227,24 +229,24 @@ function install() {
     
     fi
 
-    if [ "$(az aks nodepool show --cluster-name ${CLUSTER_NAME} --name ${WORKSPACES_POOL} --resource-group ${RESOURCE_GROUP} --query "name == '${WORKSPACES_POOL}'" || echo "empty")" == "true" ]; then
-      echo "Node pool ${WORKSPACES_POOL} exists..."
+    if [ "$(az aks nodepool show --cluster-name ${CLUSTER_NAME} --name ${SERVICES_POOL} --resource-group ${RESOURCE_GROUP} --query "name == '${SERVICES_POOL}'" || echo "empty")" == "true" ]; then
+      echo "Node pool ${SERVICES_POOL} exists..."
     else
-      echo "Creating ${WORKSPACES_POOL} node pool..."
-
+      echo "Creating ${SERVICES_POOL} node pool..."
       az aks nodepool add \
         --cluster-name "${CLUSTER_NAME}" \
         --enable-cluster-autoscaler \
         --kubernetes-version "${AKS_VERSION}" \
-        --labels "gitpod.io/workload_workspaces=true" \
+        --labels "gitpod.io/workload_services=true" \
         --max-count "5" \
         --max-pods "110" \
         --min-count "0" \
         --node-count "1" \
-        --name "${WORKSPACES_POOL}" \
+        --name "${SERVICES_POOL}" \
         --node-osdisk-size "100" \
-        --node-vm-size "${K8S_WORKSPACES_VM_SIZE}" \
+        --node-vm-size "${K8S_SERVICES_VM_SIZE}" \
         --resource-group "${RESOURCE_GROUP}"
+    fi
 
       fi
 
@@ -264,7 +266,7 @@ function install() {
         --node-count "1" \
         --name "${NO_SCALE}" \
         --node-osdisk-size "100" \
-        --node-vm-size "${K8S_SYSTEM_VM_SIZE}" \
+        --node-vm-size "${K8S_WORKSPACES_VM_SIZE}" \
         --resource-group "${RESOURCE_GROUP}"
     fi
 
