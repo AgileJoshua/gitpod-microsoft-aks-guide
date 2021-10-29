@@ -108,6 +108,11 @@ function check_prerequisites() {
         exit 1;
       fi
 
+      if [ -z "${CLOUDFLARE_ZONE_ID}" ]; then
+        echo "Missing CLOUDFLARE_ZONE_ID environment variable."
+        exit 1;
+      fi
+      
     fi
 
 }
@@ -248,12 +253,12 @@ function install() {
 
     install_cert_manager
     setup_container_registry
-    setup_cloudflare_dns
     setup_managed_dns
     setup_mysql_database
     setup_storage
     install_jaeger_operator
     install_gitpod
+    setup_cloudflare_dns
 }
 
 function install_cert_manager() {
@@ -391,7 +396,41 @@ function setup_cloudflare_dns() {
   if [ -n "${USE_CLOUDFLARE_DNS}" ] && [ "${USE_CLOUDFLARE_DNS}" == "true" ]; then
     echo "Installing cert-manager certificate issuer..."
     envsubst < "${DIR}/charts/assets/issuer-cloudflare.yaml" | kubectl apply -f -
+
+    get_cloudflare_record
+
+    #get public ip
+    PUBLIC_IP=$(kubectl get services proxy -o json | jq -r .status.loadBalancer.ingress[0].ip)
+    echo $PUBLIC_IP
+
+    #update ip record
+    echo "Updating IP record for ${DOMAIN} to ${PUBLIC_IP}"
+    SUCCESS=$(curl -X PUT "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${CF_RECORD_ID}" \
+     -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+     -H "Content-Type: application/json" \
+     --data '{"type":"A","name":"'"${DOMAIN}"'","content":"'"${PUBLIC_IP}"'","ttl":1,"proxied":false}' | jq -r .success)
+
+    echo "====="
+    echo "====="
+    echo
+
+    if [ -n "${SUCCESS}" ] && [ "${SUCCESS}" == "true" ]; then
+      echo "Proxy IP updated in cloudflare for ${DOMAIN} to ${PUBLIC_IP}"
+    else
+      echo "!!! FAILED to update IP in cloudflare for ${DOMAIN} to ${PUBLIC_IP} !!!"
+    fi
+
+    echo
+    echo "====="
+    echo "====="
   fi
+}
+
+function get_cloudflare_record(){
+CF_RECORD_ID=$(curl -X GET "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records?name=${DOMAIN}" \
+     -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+     -H "Content-Type: application/json" | jq -r .result[0].id )
+  echo "$CF_RECORD_ID"
 }
 
 function setup_managed_dns() {
@@ -572,6 +611,11 @@ function main() {
       login
       update_autoscaler
     ;;
+    '--cloudflare')
+      get_cloudflare_record
+      setup_cloudflare_dns
+    ;;
+    
     *)
       echo "Unknown command: $1"
       echo "Usage: $0 [--install|--uninstall|--auth]"
