@@ -42,6 +42,7 @@ function auth() {
 }
 
 function check_prerequisites() {
+  
     if [ -z "${AZURE_SUBSCRIPTION_ID}" ]; then
         echo "Missing AZURE_SUBSCRIPTION_ID environment variable."
         exit 1;
@@ -166,6 +167,25 @@ function install() {
 
     fi
 
+    if [ "$(az aks nodepool show --cluster-name ${CLUSTER_NAME} --name ${SERVICES_POOL} --resource-group ${RESOURCE_GROUP} --query "name == '${SERVICES_POOL}'" || echo "empty")" == "true" ]; then
+      echo "Node pool ${SERVICES_POOL} exists..."
+    else
+      echo "Creating ${SERVICES_POOL} node pool..."
+      az aks nodepool add \
+        --cluster-name "${CLUSTER_NAME}" \
+        --enable-cluster-autoscaler \
+        --kubernetes-version "${AKS_VERSION}" \
+        --max-count "5" \
+        --max-pods "110" \
+        --min-count "0" \
+        --node-count "1" \
+        --name "${SERVICES_POOL}" \
+        --node-osdisk-size "100" \
+        --node-vm-size "${K8S_SERVICES_VM_SIZE}" \
+        --resource-group "${RESOURCE_GROUP}" \
+        --labels "gitpod.io/workload_services=true" 
+    fi
+
     if [ "$(az aks nodepool show --cluster-name ${CLUSTER_NAME} --name ${SYSTEM_POOL} --resource-group ${RESOURCE_GROUP} --query "name == '${SYSTEM_POOL}'" || echo "empty")" == "true" ]; then
       echo "Node pool ${SYSTEM_POOL} exists..."
     else
@@ -192,7 +212,7 @@ function install() {
           --resource-group "${RESOURCE_GROUP}" \
           --mode User
 
-        az aks nodepool update \
+      az aks nodepool update \
           --cluster-name "${CLUSTER_NAME}" \
           --name ${SERVICES_POOL} \
           --resource-group "${RESOURCE_GROUP}" \
@@ -200,11 +220,11 @@ function install() {
           --min-count 0 \
           --max-count 5
 
-        az aks update \
+      az aks update \
           --resource-group "${RESOURCE_GROUP}" \
           --name "${CLUSTER_NAME}" \
           --cluster-autoscaler-profile expander=least-waste scale-down-delay-after-add=5m scale-down-unneeded-time=5m scale-down-utilization-threshold=0.6 
-   
+    
     fi
 
     if [ "$(az aks nodepool show --cluster-name ${CLUSTER_NAME} --name ${WORKSPACES_POOL} --resource-group ${RESOURCE_GROUP} --query "name == '${WORKSPACES_POOL}'" || echo "empty")" == "true" ]; then
@@ -226,49 +246,23 @@ function install() {
         --node-vm-size "${K8S_WORKSPACES_VM_SIZE}" \
         --resource-group "${RESOURCE_GROUP}"
 
-        az aks nodepool update \
-          --cluster-name "${CLUSTER_NAME}" \
-          --name ${WORKSPACES_POOL} \
-          --resource-group "${RESOURCE_GROUP}" \
-          --update-cluster-autoscaler \
-          --min-count 0 \
-          --max-count 5
       fi
 
-    if [ "$(az aks nodepool show --cluster-name ${CLUSTER_NAME} --name ${WORKSPACES_POOL}${NO_SCALE} --resource-group ${RESOURCE_GROUP} --query "name == '${WORKSPACES_POOL}${NO_SCALE}'" || echo "empty")" == "true" ]; then
-      echo "Node pool ${WORKSPACES_POOL}${NO_SCALE} exists..."
+    if [ "$(az aks nodepool show --cluster-name ${CLUSTER_NAME} --name ${NO_SCALE} --resource-group ${RESOURCE_GROUP} --query "name == '${NO_SCALE}'" || echo "empty")" == "true" ]; then
+      echo "Node pool ${NO_SCALE} exists..."
     else
-      echo "Creating ${WORKSPACES_POOL}${NO_SCALE} node pool..."
+      echo "Creating ${NO_SCALE} node pool..."
 
       az aks nodepool add \
         --cluster-name "${CLUSTER_NAME}" \
         --enable-cluster-autoscaler \
         --kubernetes-version "${AKS_VERSION}" \
-        --labels "gitpod.io/workload_workspaces=true" \
+        --labels "gitpod.io/workload_workspaces=true" "gitpod.io/workload_services=true" \
         --max-count "2" \
         --max-pods "110" \
-        --min-count "0" \
+        --min-count "1" \
         --node-count "1" \
-        --name "${WORKSPACES_POOL}${NO_SCALE}" \
-        --node-osdisk-size "100" \
-        --node-vm-size "${K8S_SYSTEM_VM_SIZE}" \
-        --resource-group "${RESOURCE_GROUP}"
-    fi
-
-    if [ "$(az aks nodepool show --cluster-name ${CLUSTER_NAME} --name ${SERVICES_POOL}${NO_SCALE} --resource-group ${RESOURCE_GROUP} --query "name == '${SERVICES_POOL}${NO_SCALE}'" || echo "empty")" == "true" ]; then
-      echo "Node pool ${SERVICES_POOL}${NO_SCALE} exists..."
-    else
-      echo "Creating ${SERVICES_POOL}${NO_SCALE} node pool..."
-
-      az aks nodepool add \
-        --cluster-name "${CLUSTER_NAME}" \
-        --kubernetes-version "${AKS_VERSION}" \
-        --labels "gitpod.io/workload_services=true" \
-        --max-count "2" \
-        --max-pods "110" \
-        --min-count "0" \
-        --node-count "1" \
-        --name "${SERVICES_POOL}${NO_SCALE}" \
+        --name "${NO_SCALE}" \
         --node-osdisk-size "100" \
         --node-vm-size "${K8S_SYSTEM_VM_SIZE}" \
         --resource-group "${RESOURCE_GROUP}"
