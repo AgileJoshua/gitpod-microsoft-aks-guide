@@ -2,8 +2,9 @@ FROM gitpod/workspace-full
 
 USER root
 
+
 ### Helm ###
-RUN curl -fsSL https://get.helm.sh/helm-v3.0.1-linux-amd64.tar.gz \
+RUN curl -fsSL https://get.helm.sh/helm-v3.7.1-linux-amd64.tar.gz \
     | tar -xzvC /usr/local/bin --strip-components=1 \
     && helm completion bash > /usr/share/bash-completion/completions/helm
 
