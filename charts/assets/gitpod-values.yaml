@@ -26,11 +26,11 @@ resources:
 
 workspaceSizing:
   requests:
-    cpu: 300m
+    cpu: 1.5
     memory: 2.75Gi
     storage: ""
   limits:
-    cpu: "6"
+    cpu: "4"
     memory: 12Gi
   dynamic:
     cpu:
