@@ -248,8 +248,6 @@ function install() {
         --resource-group "${RESOURCE_GROUP}"
     fi
 
-      fi
-
     if [ "$(az aks nodepool show --cluster-name ${CLUSTER_NAME} --name ${NO_SCALE} --resource-group ${RESOURCE_GROUP} --query "name == '${NO_SCALE}'" || echo "empty")" == "true" ]; then
       echo "Node pool ${NO_SCALE} exists..."
     else
