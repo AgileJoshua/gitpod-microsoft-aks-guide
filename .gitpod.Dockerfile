@@ -25,4 +25,8 @@ RUN cd /usr/bin && curl -L https://github.com/mikefarah/yq/releases/download/2.4
 #az for aks
 RUN curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
 
+# install gettext for envsubst
+RUN apt-get update
+RUN apt-get install -y gettext-base
+
 USER gitpod
