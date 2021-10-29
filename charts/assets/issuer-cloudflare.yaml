@@ -20,7 +20,7 @@ spec:
       name: issuer-account-key
     solvers:
       - dns01:
-         cloudflare:
+          cloudflare:
             email: $CLOUDFLARE_EMAIL # Your Cloudflare email address
             apiTokenSecretRef:
               name: cloudflare-api-token-secret

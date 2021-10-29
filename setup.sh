@@ -13,9 +13,9 @@ source "${DIR}/.env"
 set -a
 
 # Name of the node-pools for Gitpod services and workspaces
-SERVICES_POOL="services"
-WORKSPACES_POOL="workspaces"
-NOSCALE_POOL="noscale"
+SERVICES_POOL="gitpod"
+WORKSPACES_POOL=""
+NOSCALE_POOL=""
 
 AKS_VERSION=${AKS_VERSION:="1.20.9"}
 K8S_NOSCALE_VM_SIZE=${K8S_NOSCALE_VM_SIZE:="Standard_B2ms"}
@@ -146,10 +146,10 @@ function install() {
       echo "Kubernetes cluster exists..."
     else
       echo "Creating Kubernetes instance..."
-      ATTACH_REGISTRY="\\"
+      ATTACH_REGISTRY=""
 
       if [[ -n "${USE_MANAGED_CLUSTER_IDENTITY}" && "${USE_MANAGED_CLUSTER_IDENTITY}" == "true" ]]; then
-        ATTACH_REGISTRY="--attach-acr ${REGISTRY_NAME} \\"
+        ATTACH_REGISTRY="--attach-acr ${REGISTRY_NAME}"
       fi
 
       az aks create \
@@ -157,21 +157,41 @@ function install() {
         --enable-managed-identity \
         --location "${LOCATION}" \
         --kubernetes-version "${AKS_VERSION}" \
+        --max-count "5" \
         --max-pods "110" \
+        --min-count "1" \
         --node-count "1" \
         --name "${CLUSTER_NAME}" \
         --node-osdisk-size "100" \
-        --node-vm-size "${K8S_NOSCALE_VM_SIZE}" \
-        --nodepool-labels "gitpod.io/workload_services=true" "gitpod.io/workload_workspaces=true" "app.kubernetes.io/component=primary" "app.kubernetes.io/instance=gitpod" \
-        --nodepool-name "${NOSCALE_POOL}" \
+        --node-vm-size "${K8S_SERVICES_VM_SIZE}" \
+        --nodepool-labels "gitpod.io/workload_services=true" "gitpod.io/workload_workspaces=true" \
+        --nodepool-name "${SERVICES_POOL}" \
         --resource-group "${RESOURCE_GROUP}" \
-        --no-ssh-key \
-        ${ATTACH_REGISTRY}
+        --no-ssh-key ${ATTACH_REGISTRY} \
         --vm-set-type "VirtualMachineScaleSets"
 
       update_autoscaler
     fi
 
+    # if [ "$(az aks nodepool show --cluster-name ${CLUSTER_NAME} --name ${NOSCALE_POOL} --resource-group ${RESOURCE_GROUP} --query "name == '${NOSCALE_POOL}'" || echo "empty")" == "true" ]; then
+    #   echo "Node pool ${NOSCALE_POOL} exists..."
+    # else
+    #   echo "Creating ${NOSCALE_POOL} node pool..."
+    #   az aks nodepool add \
+    #     --cluster-name "${CLUSTER_NAME}" \
+    #     --kubernetes-version "${AKS_VERSION}" \
+    #     --labels "gitpod.io/workload_services=true" "gitpod.io/workload_workspaces=true" \
+    #     --max-pods "110" \
+    #     --node-count "1" \
+    #     --name "${NOSCALE_POOL}" \
+    #     --node-osdisk-size "100" \
+    #     --node-vm-size "${K8S_NOSCALE_VM_SIZE}" \
+    #     --resource-group "${RESOURCE_GROUP}" \
+    #     --mode System
+
+    #   update_autoscaler
+    # fi
+
     if [ "$(az aks nodepool show --cluster-name ${CLUSTER_NAME} --name ${SERVICES_POOL} --resource-group ${RESOURCE_GROUP} --query "name == '${SERVICES_POOL}'" || echo "empty")" == "true" ]; then
       echo "Node pool ${SERVICES_POOL} exists..."
     else
@@ -179,97 +199,44 @@ function install() {
       az aks nodepool add \
         --cluster-name "${CLUSTER_NAME}" \
         --enable-cluster-autoscaler \
-        --kubernetes-version "${AKS_VERSION}" \
-        --max-count "5" \
-        --max-pods "110" \
-        --min-count "0" \
-        --node-count "1" \
-        --name "${SERVICES_POOL}" \
-        --node-osdisk-size "100" \
-        --node-vm-size "${K8S_SERVICES_VM_SIZE}" \
-        --resource-group "${RESOURCE_GROUP}" \
-        --labels "gitpod.io/workload_services=true" 
-    fi
-
-    if [ "$(az aks nodepool show --cluster-name ${CLUSTER_NAME} --name ${SYSTEM_POOL} --resource-group ${RESOURCE_GROUP} --query "name == '${SYSTEM_POOL}'" || echo "empty")" == "true" ]; then
-      echo "Node pool ${SYSTEM_POOL} exists..."
-    else
-      echo "Creating ${NOSCALE_POOL} node pool..."
-      az aks nodepool add \
-        --cluster-name "${CLUSTER_NAME}" \
         --kubernetes-version "${AKS_VERSION}" \
         --labels "gitpod.io/workload_services=true" "gitpod.io/workload_workspaces=true" \
-        --max-pods "110" \
-        --node-count "1" \
-        --name "${NOSCALE_POOL}" \
-        --node-osdisk-size "100" \
-        --node-vm-size "${K8S_NOSCALE_VM_SIZE}" \
-        --resource-group "${RESOURCE_GROUP}" \
-        --mode System
-
-      #make initial nodepool user pool
-      az aks nodepool update \
-          --cluster-name "${CLUSTER_NAME}" \
-          --name ${SERVICES_POOL} \
-          --resource-group "${RESOURCE_GROUP}" \
-          --mode User
-
-      az aks nodepool update \
-          --cluster-name "${CLUSTER_NAME}" \
-          --name ${SERVICES_POOL} \
-          --resource-group "${RESOURCE_GROUP}" \
-          --update-cluster-autoscaler \
-          --min-count 0 \
-          --max-count 5
-
-      az aks update \
-          --resource-group "${RESOURCE_GROUP}" \
-          --name "${CLUSTER_NAME}" \
-          --cluster-autoscaler-profile expander=least-waste scale-down-delay-after-add=5m scale-down-unneeded-time=5m scale-down-utilization-threshold=0.6 
-    
-    fi
-
-    if [ "$(az aks nodepool show --cluster-name ${CLUSTER_NAME} --name ${SERVICES_POOL} --resource-group ${RESOURCE_GROUP} --query "name == '${SERVICES_POOL}'" || echo "empty")" == "true" ]; then
-      echo "Node pool ${SERVICES_POOL} exists..."
-    else
-      echo "Creating ${SERVICES_POOL} node pool..."
-      az aks nodepool add \
-        --cluster-name "${CLUSTER_NAME}" \
-        --enable-cluster-autoscaler \
-        --kubernetes-version "${AKS_VERSION}" \
-        --labels "gitpod.io/workload_services=true" \
         --max-count "5" \
-        --max-pods "110" \
-        --min-count "0" \
-        --node-count "1" \
-        --name "${SERVICES_POOL}" \
-        --node-osdisk-size "100" \
-        --node-vm-size "${K8S_SERVICES_VM_SIZE}" \
-        --resource-group "${RESOURCE_GROUP}"
-    fi
-
-    if [ "$(az aks nodepool show --cluster-name ${CLUSTER_NAME} --name ${NO_SCALE} --resource-group ${RESOURCE_GROUP} --query "name == '${NO_SCALE}'" || echo "empty")" == "true" ]; then
-      echo "Node pool ${NO_SCALE} exists..."
-    else
-      echo "Creating ${NO_SCALE} node pool..."
-
-      az aks nodepool add \
-        --cluster-name "${CLUSTER_NAME}" \
-        --enable-cluster-autoscaler \
-        --kubernetes-version "${AKS_VERSION}" \
-        --labels "gitpod.io/workload_workspaces=true" "gitpod.io/workload_services=true" \
-        --max-count "2" \
         --max-pods "110" \
         --min-count "1" \
         --node-count "1" \
-        --name "${NO_SCALE}" \
+        --name "${SERVICES_POOL}" \
         --node-osdisk-size "100" \
-        --node-vm-size "${K8S_WORKSPACES_VM_SIZE}" \
-        --resource-group "${RESOURCE_GROUP}"
+        --node-vm-size "${K8S_SERVICES_VM_SIZE}" \
+        --resource-group "${RESOURCE_GROUP}" \
+        --mode System
     fi
+
+    # if [ "$(az aks nodepool show --cluster-name ${CLUSTER_NAME} --name ${WORKSPACES_POOL} --resource-group ${RESOURCE_GROUP} --query "name == '${WORKSPACES_POOL}'" || echo "empty")" == "true" ]; then
+    #   echo "Node pool ${WORKSPACES_POOL} exists..."
+    # else
+    #   echo "Creating ${WORKSPACES_POOL} node pool..."
+    #   az aks nodepool add \
+    #     --cluster-name "${CLUSTER_NAME}" \
+    #     --enable-cluster-autoscaler \
+    #     --kubernetes-version "${AKS_VERSION}" \
+    #     --labels "gitpod.io/workload_workspaces=true" \
+    #     --max-count "5" \
+    #     --max-pods "110" \
+    #     --min-count "0" \
+    #     --node-count "0" \
+    #     --name "${WORKSPACES_POOL}" \
+    #     --node-osdisk-size "100" \
+    #     --node-vm-size "${K8S_WORKSPACES_VM_SIZE}" \
+    #     --resource-group "${RESOURCE_GROUP}"
+    # fi
 
     setup_kubectl
 
+    #aks doesn't support kubernetes.io labels on nodepool
+   #echo "Adding labels to ${NOSCALE_POOL} nodes"
+    #kubectl label nodes -l agentpool=${NOSCALE_POOL} "app.kubernetes.io/component=primary" "app.kubernetes.io/instance=gitpod" --overwrite
+    
     # Create secret with container registry credentials
     if [ -n "${IMAGE_PULL_SECRET_FILE}" ] && [ -f "${IMAGE_PULL_SECRET_FILE}" ]; then
         if ! kubectl get secret gitpod-image-pull-secret; then
@@ -324,7 +291,7 @@ metadata:
 spec:
   secretName: proxy-config-certificates
   issuerRef:
-    name: azure-issuer
+    name: letsencrypt
     kind: ClusterIssuer
   dnsNames:
     - $DOMAIN
@@ -600,6 +567,10 @@ function main() {
     ;;
     '--check')
       check_prerequisites
+    ;;
+    '--update_autoscaler')
+      login
+      update_autoscaler
     ;;
     *)
       echo "Unknown command: $1"
