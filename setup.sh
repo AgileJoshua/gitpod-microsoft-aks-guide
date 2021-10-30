@@ -30,7 +30,6 @@ function auth() {
         exit 1
     fi
 
-    login
     setup_kubectl
 
     echo "Using the auth providers configuration file: ${AUTHPROVIDERS_CONFIG}"
@@ -259,6 +258,7 @@ function install() {
     install_jaeger_operator
     install_gitpod
     setup_cloudflare_dns
+    auth "auth-providers-patch.yaml"
 }
 
 function install_cert_manager() {
@@ -302,6 +302,7 @@ spec:
     - $DOMAIN
     - '*.$DOMAIN'
     - '*.ws.$DOMAIN'
+    - '211030.$DOMAIN'
 EOF
 
   kubectl apply -f gitpod-certificate.yaml
@@ -397,40 +398,43 @@ function setup_cloudflare_dns() {
     echo "Installing cert-manager certificate issuer..."
     envsubst < "${DIR}/charts/assets/issuer-cloudflare.yaml" | kubectl apply -f -
 
-    get_cloudflare_record
+    
 
     #get public ip
     PUBLIC_IP=$(kubectl get services proxy -o json | jq -r .status.loadBalancer.ingress[0].ip)
-    echo $PUBLIC_IP
 
-    #update ip record
-    echo "Updating IP record for ${DOMAIN} to ${PUBLIC_IP}"
-    SUCCESS=$(curl -X PUT "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${CF_RECORD_ID}" \
-     -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-     -H "Content-Type: application/json" \
-     --data '{"type":"A","name":"'"${DOMAIN}"'","content":"'"${PUBLIC_IP}"'","ttl":1,"proxied":false}' | jq -r .success)
-
-    echo "====="
-    echo "====="
-    echo
-
-    if [ -n "${SUCCESS}" ] && [ "${SUCCESS}" == "true" ]; then
-      echo "Proxy IP updated in cloudflare for ${DOMAIN} to ${PUBLIC_IP}"
-    else
-      echo "!!! FAILED to update IP in cloudflare for ${DOMAIN} to ${PUBLIC_IP} !!!"
-    fi
-
-    echo
-    echo "====="
-    echo "====="
+    update_cloudflare_record "${DOMAIN}" $PUBLIC_IP
+    update_cloudflare_record "*.${DOMAIN}" $PUBLIC_IP
+    update_cloudflare_record "*.ws.${DOMAIN}" $PUBLIC_IP
   fi
 }
 
 function get_cloudflare_record(){
-CF_RECORD_ID=$(curl -X GET "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records?name=${DOMAIN}" \
+  CF_RECORD_ID=$(curl -X GET "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records?name=$1" \
      -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
      -H "Content-Type: application/json" | jq -r .result[0].id )
   echo "$CF_RECORD_ID"
+}
+
+function update_cloudflare_record(){
+  UPD_DOMAIN=$1
+  UPD_IP=$2
+
+  get_cloudflare_record "${UPD_DOMAIN}"
+
+  echo "Updating IP record for ${UPD_DOMAIN} to ${UPD_IP}"
+    SUCCESS=$(curl -X PUT "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${CF_RECORD_ID}" \
+     -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+     -H "Content-Type: application/json" \
+     --data '{"type":"A","name":"'"${UPD_DOMAIN}"'","content":"'"${UPD_IP}"'","ttl":1,"proxied":false}' | jq -r .success)
+  
+  echo "====="
+  if [ -n "${SUCCESS}" ] && [ "${SUCCESS}" == "true" ]; then
+    echo "Proxy IP updated in cloudflare for ${UPD_DOMAIN} to ${UPD_IP}"
+  else
+    echo "!!! FAILED to update IP in cloudflare for ${UPD_DOMAIN} to ${UPD_IP} !!!"
+  fi
+  echo "====="
 }
 
 function setup_managed_dns() {
@@ -596,6 +600,7 @@ function uninstall() {
 function main() {
   case $1 in
     '--auth')
+      login
       auth "auth-providers-patch.yaml"
     ;;
     '--install')
@@ -612,7 +617,7 @@ function main() {
       update_autoscaler
     ;;
     '--cloudflare')
-      get_cloudflare_record
+      get_cloudflare_record "${DOMAIN}"
       setup_cloudflare_dns
     ;;
     

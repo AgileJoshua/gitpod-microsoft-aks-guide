@@ -22,7 +22,7 @@ installPodSecurityPolicies: true
 resources:
   default:
     cpu: 1m
-    memory: 128Mi
+    memory: 256Mi
 
 workspaceSizing:
   requests:
